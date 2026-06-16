@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.js
+*.d.ts
+*.js.map
+!jest.config.js
+!eslint.config.js
+!commitlint.config.js
+.env
+.env.*
+!.env.example
+coverage/
+.DS_Store
+.auto-dev/
