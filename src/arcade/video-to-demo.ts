@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, unlinkSync } from 'node:fs';
 import { promisify } from 'node:util';
 import * as logger from '../util/logger.js';
+import type { DemoAction } from '../types.js';
 import type { ArcadeAuth } from './auth.js';
 
 const execFileAsync = promisify(execFile);
@@ -53,17 +54,30 @@ function buildCookieList(cookieStr: string): Array<{
 export async function videoToDemo(
   auth: ArcadeAuth,
   videoPath: string,
-  options: { cleanupMp4?: boolean } = {},
+  options: { cleanupMp4?: boolean; trim?: boolean; actions?: readonly DemoAction[] } = {},
 ): Promise<VideoToDemoResult> {
+  let inputPath = videoPath;
+  const filesToCleanup: string[] = [];
+
+  // Step 0: Trim video if requested (remove idle time between actions)
+  if (options.trim && options.actions && options.actions.length > 0) {
+    const { trimVideo } = await import('../util/trim-video.js');
+    const trimmedPath = await trimVideo(inputPath, options.actions);
+    if (trimmedPath !== inputPath) {
+      filesToCleanup.push(trimmedPath);
+      inputPath = trimmedPath;
+    }
+  }
+
   // Step 1: Convert to MP4 if needed
-  let mp4Path = videoPath;
+  let mp4Path = inputPath;
   let needsCleanup = false;
 
-  if (videoPath.endsWith('.webm')) {
-    mp4Path = await convertToMp4(videoPath);
+  if (inputPath.endsWith('.webm')) {
+    mp4Path = await convertToMp4(inputPath);
     needsCleanup = options.cleanupMp4 !== false;
-  } else if (!videoPath.endsWith('.mp4')) {
-    throw new Error(`Unsupported video format: ${videoPath}. Use .webm or .mp4`);
+  } else if (!inputPath.endsWith('.mp4')) {
+    throw new Error(`Unsupported video format: ${inputPath}. Use .webm or .mp4`);
   }
 
   if (!existsSync(mp4Path)) {
@@ -156,12 +170,10 @@ export async function videoToDemo(
   } finally {
     await browser.close();
 
-    // Clean up temp MP4
-    if (needsCleanup && existsSync(mp4Path)) {
-      try {
-        unlinkSync(mp4Path);
-      } catch {
-        // ignore cleanup errors
+    // Clean up temp files
+    for (const f of [needsCleanup ? mp4Path : null, ...filesToCleanup]) {
+      if (f && existsSync(f)) {
+        try { unlinkSync(f); } catch { /* ignore */ }
       }
     }
   }

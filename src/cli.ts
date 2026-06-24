@@ -248,7 +248,8 @@ export function createCli(): Command {
     .argument('<artifact-dir>', 'Path to the artifact directory')
     .option('--cookie-file <path>', 'Path to file containing Arcade session cookie', '~/.arcade-cookie')
     .option('--video <path>', 'Path to video file (overrides auto-detection)')
-    .action(async (artifactDir: string, opts: { cookieFile: string; video?: string }) => {
+    .option('--trim', 'Trim idle time from video before uploading', false)
+    .action(async (artifactDir: string, opts: { cookieFile: string; video?: string; trim: boolean }) => {
       try {
         await publishViaVideo(artifactDir, opts);
       } catch (err) {
@@ -263,7 +264,7 @@ export function createCli(): Command {
 
 async function publishViaVideo(
   artifactDir: string,
-  opts: { cookieFile: string; video?: string },
+  opts: { cookieFile: string; video?: string; trim: boolean },
 ): Promise<void> {
   // Find video: explicit flag > recording.webm > any .webm in the directory
   let videoPath = opts.video;
@@ -284,14 +285,28 @@ async function publishViaVideo(
     throw new Error('No video file found. Use --video to specify one.');
   }
 
-  logger.info('Publishing via Video to Interactive Demo', { video: videoPath });
+  // Parse actions for trimming (if actions.md exists)
+  const actionsPath = join(artifactDir, ACTIONS_FILENAME);
+  let actions: import('./types.js').DemoAction[] = [];
+  if (existsSync(actionsPath)) {
+    const actionsContent = readFileSync(actionsPath, 'utf-8');
+    const parsed = parseActionsFile(actionsContent);
+    actions = [...parsed.actions];
+    logger.info('Parsed actions for trimming', { count: actions.length });
+  }
+
+  logger.info('Publishing via Video to Interactive Demo', { video: videoPath, trim: opts.trim });
 
   // Load auth
   const cookiePath = opts.cookieFile.replace(/^~/, process.env.HOME ?? '');
   const auth = loadAuth(cookiePath);
 
   // Publish
-  const result = await videoToDemo(auth, videoPath, { cleanupMp4: true });
+  const result = await videoToDemo(auth, videoPath, {
+    cleanupMp4: true,
+    trim: opts.trim,
+    actions,
+  });
 
   process.stdout.write(JSON.stringify({
     flowId: result.flowId,
