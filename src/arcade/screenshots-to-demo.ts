@@ -150,14 +150,14 @@ export async function screenshotsToDemo(
       for (let i = 0; i < remainingPaths.length; i += batchSize) {
         const batch = remainingPaths.slice(i, i + batchSize);
 
-        // Click "Add step" at the bottom
-        const addStepButton = page.locator('text="Add step"');
-        await addStepButton.waitFor({ state: 'visible', timeout: 10_000 });
-        await addStepButton.click();
-        await page.waitForTimeout(1000);
+        // Click the "+" button to add a step (either the "Add step" button or a "+" icon)
+        const addButton = page.locator('button:has-text("Add step"), button:has-text("+")').first();
+        await addButton.waitFor({ state: 'visible', timeout: 10_000 });
+        await addButton.click();
+        await page.waitForTimeout(1500);
 
-        // Click "My computer" in the dropdown
-        const mcOption = page.locator('div[class*="popover"], div[class*="dropdown"], div[class*="menu"]').locator('text="My computer"');
+        // Click "My computer" in the dropdown/popover
+        const mcOption = page.locator('text="My computer"').last();
         const chooserPromise = page.waitForEvent('filechooser', { timeout: 10_000 });
         await mcOption.click();
         const chooser = await chooserPromise;
@@ -174,10 +174,69 @@ export async function screenshotsToDemo(
       }
     }
 
+    // Add callouts to each step using the action labels
+    logger.info('Adding callouts to steps...');
+    const { toImperativeLabel } = await import('../transform/labels.js');
+
+    for (let i = 0; i < Math.min(framePaths.length, clickActions.length); i++) {
+      try {
+        const stepNum = i + 1;
+
+        // Navigate to the step by clicking its number badge in the thumbnail list
+        // The thumbnails have the step number as text content
+        const allStepBadges = page.locator(`text="${stepNum}"`);
+        const count = await allStepBadges.count();
+
+        // Find the one that's a small badge (in the thumbnail area, not in content)
+        let clicked = false;
+        for (let j = 0; j < count; j++) {
+          const badge = allStepBadges.nth(j);
+          const box = await badge.boundingBox();
+          if (box && box.x < 230 && box.width < 40) {
+            // This is in the sidebar area (left side, small element)
+            await badge.click();
+            clicked = true;
+            break;
+          }
+        }
+
+        if (!clicked) {
+          logger.warn('Could not find step thumbnail', { step: stepNum });
+          continue;
+        }
+        await page.waitForTimeout(1000);
+
+        // Click the "Callout" toolbar button (identified by aria-label)
+        const calloutBtn = page.locator('button[aria-label="Callout"]');
+        if (!(await calloutBtn.isVisible({ timeout: 3000 }))) {
+          logger.warn('Callout button not visible', { step: stepNum });
+          continue;
+        }
+        await calloutBtn.click();
+        await page.waitForTimeout(1000);
+
+        // Type the callout text
+        const labelText = toImperativeLabel(clickActions[i].rawNarrative);
+        await page.keyboard.type(labelText);
+        await page.waitForTimeout(300);
+
+        // Press Escape to deselect the callout
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
+
+        if (stepNum % 5 === 0 || stepNum === 1) {
+          logger.info('Callout added', { step: stepNum, label: labelText.slice(0, 50) });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn('Failed to add callout', { step: i + 1, error: msg });
+      }
+    }
+    logger.info('Callouts complete');
+
     // Set the title
     logger.info('Setting demo title...');
     try {
-      // Click on the title in the breadcrumb/header to edit it
       const titleElement = page.locator(`text="Untitled"`).first();
       if (await titleElement.isVisible({ timeout: 3000 })) {
         await titleElement.dblclick();
