@@ -1,16 +1,19 @@
 /**
  * Extract individual PNG frames from a video at specific timestamps using ffmpeg.
+ * Supports auto-cropping grey bars from raw per-tab recordings.
  */
 import { execFile } from 'node:child_process';
 import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import * as logger from './logger.js';
+import { detectGreyBar } from './trim-video.js';
 
 const execFileAsync = promisify(execFile);
 
 /**
  * Extract a single frame from a video at the given timestamp.
+ * Optionally crops the grey bar if crop dimensions are provided.
  * @returns Path to the extracted PNG file.
  */
 export async function extractFrame(
@@ -18,6 +21,7 @@ export async function extractFrame(
   timestampSeconds: number,
   outputDir: string,
   frameId: string,
+  crop?: { width: number; height: number },
 ): Promise<string> {
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
@@ -25,14 +29,19 @@ export async function extractFrame(
 
   const outputPath = join(outputDir, `${frameId}.png`);
 
-  await execFileAsync('ffmpeg', [
+  const args = [
     '-ss', String(timestampSeconds),
     '-i', videoPath,
     '-frames:v', '1',
-    '-q:v', '2',
-    '-y',
-    outputPath,
-  ], { timeout: 30_000 });
+  ];
+
+  if (crop) {
+    args.push('-vf', `crop=${crop.width}:${crop.height}:0:0`);
+  }
+
+  args.push('-q:v', '2', '-y', outputPath);
+
+  await execFileAsync('ffmpeg', args, { timeout: 30_000 });
 
   // ffmpeg may exit 0 but produce no output if timestamp is beyond video duration
   if (!existsSync(outputPath)) {
@@ -44,6 +53,7 @@ export async function extractFrame(
 
 /**
  * Extract frames for all click events, returning a map of clickId -> PNG path.
+ * Auto-detects and crops grey bars from raw per-tab recordings.
  */
 export async function extractClickFrames(
   videoPath: string,
@@ -53,6 +63,12 @@ export async function extractClickFrames(
   const framesDir = join(outputDir, '.arcade-frames');
   const result = new Map<string, string>();
 
+  // Detect grey bar once for all frames
+  const crop = await detectGreyBar(videoPath);
+  if (crop) {
+    logger.info('Will crop grey bar from frames', { contentWidth: crop.width });
+  }
+
   logger.info('Extracting frames from video', {
     videoPath,
     clicks: clicks.length,
@@ -61,7 +77,7 @@ export async function extractClickFrames(
 
   for (const click of clicks) {
     try {
-      const framePath = await extractFrame(videoPath, click.timestamp, framesDir, click.id);
+      const framePath = await extractFrame(videoPath, click.timestamp, framesDir, click.id, crop ?? undefined);
       result.set(click.id, framePath);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

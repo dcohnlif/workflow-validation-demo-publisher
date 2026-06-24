@@ -42,12 +42,14 @@ function buildCookieList(cookieStr: string): Array<{
   value: string;
   domain: string;
   path: string;
+  secure: boolean;
+  sameSite: 'Lax';
 }> {
   return cookieStr.split('; ').map((pair) => {
     const eqIdx = pair.indexOf('=');
     const name = pair.slice(0, eqIdx);
     const value = pair.slice(eqIdx + 1);
-    return { name, value, domain: '.arcade.software', path: '/' };
+    return { name, value, domain: '.arcade.software', path: '/', secure: true, sameSite: 'Lax' as const };
   });
 }
 

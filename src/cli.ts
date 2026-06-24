@@ -11,6 +11,7 @@ import { loadAuth } from './arcade/auth.js';
 import { ExtensionClient } from './arcade/extension-client.js';
 import { extensionPublish } from './arcade/extension-publish.js';
 import { videoToDemo } from './arcade/video-to-demo.js';
+import { screenshotsToDemo } from './arcade/screenshots-to-demo.js';
 import * as logger from './util/logger.js';
 import type { ArcadeConfig, PublishResult } from './types.js';
 
@@ -259,7 +260,98 @@ export function createCli(): Command {
       }
     });
 
+  program
+    .command('publish-screenshots')
+    .description('Publish using screenshots extracted from video at action timestamps')
+    .argument('<artifact-dir>', 'Path to the artifact directory')
+    .option('--cookie-file <path>', 'Path to file containing Arcade session cookie', '~/.arcade-cookie')
+    .option('--storage-state <path>', 'Playwright storage state file (more reliable than cookie)', '~/.arcade-state.json')
+    .option('--video <path>', 'Path to video file (overrides auto-detection)')
+    .option('--title <title>', 'Demo title (overrides auto-detection from report.md)')
+    .action(async (artifactDir: string, opts: { cookieFile: string; storageState: string; video?: string; title?: string }) => {
+      try {
+        await publishViaScreenshots(artifactDir, opts);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Publish-screenshots failed', { error: message });
+        process.exitCode = 1;
+      }
+    });
+
   return program;
+}
+
+async function publishViaScreenshots(
+  artifactDir: string,
+  opts: { cookieFile: string; storageState: string; video?: string; title?: string },
+): Promise<void> {
+  const actionsPath = join(artifactDir, ACTIONS_FILENAME);
+  if (!existsSync(actionsPath)) {
+    throw new Error(`${ACTIONS_FILENAME} not found in ${artifactDir}`);
+  }
+
+  // Find video
+  let videoPath = opts.video;
+  if (!videoPath) {
+    const recordingPath = join(artifactDir, 'recording.webm');
+    if (existsSync(recordingPath)) {
+      videoPath = recordingPath;
+    } else {
+      const webmFiles = readdirSync(artifactDir).filter((f) => f.endsWith('.webm'));
+      if (webmFiles.length > 0) {
+        videoPath = join(artifactDir, webmFiles[0]);
+        logger.info('Using first .webm file found', { file: webmFiles[0] });
+      }
+    }
+  }
+
+  if (!videoPath || !existsSync(videoPath)) {
+    throw new Error('No video file found. Use --video to specify one.');
+  }
+
+  // Parse actions
+  const actionsContent = readFileSync(actionsPath, 'utf-8');
+  const { metadata, actions } = parseActionsFile(actionsContent);
+
+  // Get title from report or flag
+  let title = opts.title ?? '';
+  if (!title) {
+    const reportPath = join(artifactDir, 'report.md');
+    if (existsSync(reportPath)) {
+      const report = parseReportFile(readFileSync(reportPath, 'utf-8'));
+      title = report.title;
+    }
+  }
+  if (!title) {
+    title = metadata.workflowName;
+  }
+
+  logger.info('Publishing via screenshots', {
+    workflow: metadata.workflowName,
+    actions: actions.length,
+    clicks: actions.filter((a) => a.type === 'click').length,
+    video: videoPath,
+    title,
+  });
+
+  // Load auth
+  const cookiePath = opts.cookieFile.replace(/^~/, process.env.HOME ?? '');
+  const auth = loadAuth(cookiePath);
+
+  // Resolve storage state path
+  const storageStatePath = opts.storageState.replace(/^~/, process.env.HOME ?? '');
+
+  // Publish
+  const result = await screenshotsToDemo(auth, videoPath, actions, title, { storageStatePath });
+
+  process.stdout.write(JSON.stringify({
+    flowId: result.flowId,
+    editUrl: result.editUrl,
+    title: result.title,
+    steps: result.steps,
+    duration: metadata.duration,
+    createdAt: new Date().toISOString(),
+  }, null, 2) + '\n');
 }
 
 async function publishViaVideo(
