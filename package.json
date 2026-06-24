@@ -27,6 +27,7 @@
     "eslint-plugin-sonarjs": "^4.0.0",
     "husky": "^9.1.0",
     "lint-staged": "^16.0.0",
+    "playwright": "^1.61.1",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.0"
@@ -35,7 +36,9 @@
     "node": ">=20.0.0"
   },
   "lint-staged": {
-    "*.ts": ["eslint --fix"]
+    "*.ts": [
+      "eslint --fix"
+    ]
   },
   "license": "Apache-2.0"
 }

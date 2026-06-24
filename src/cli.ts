@@ -10,6 +10,7 @@ import { uploadWorkflowVideo } from './arcade/upload.js';
 import { loadAuth } from './arcade/auth.js';
 import { ExtensionClient } from './arcade/extension-client.js';
 import { extensionPublish } from './arcade/extension-publish.js';
+import { videoToDemo } from './arcade/video-to-demo.js';
 import * as logger from './util/logger.js';
 import type { ArcadeConfig, PublishResult } from './types.js';
 
@@ -241,7 +242,63 @@ export function createCli(): Command {
       }
     });
 
+  program
+    .command('publish-video')
+    .description('Publish using Arcade "Video to Interactive Demo" via Playwright')
+    .argument('<artifact-dir>', 'Path to the artifact directory')
+    .option('--cookie-file <path>', 'Path to file containing Arcade session cookie', '~/.arcade-cookie')
+    .option('--video <path>', 'Path to video file (overrides auto-detection)')
+    .action(async (artifactDir: string, opts: { cookieFile: string; video?: string }) => {
+      try {
+        await publishViaVideo(artifactDir, opts);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Publish-video failed', { error: message });
+        process.exitCode = 1;
+      }
+    });
+
   return program;
+}
+
+async function publishViaVideo(
+  artifactDir: string,
+  opts: { cookieFile: string; video?: string },
+): Promise<void> {
+  // Find video: explicit flag > recording.webm > any .webm in the directory
+  let videoPath = opts.video;
+  if (!videoPath) {
+    const recordingPath = join(artifactDir, 'recording.webm');
+    if (existsSync(recordingPath)) {
+      videoPath = recordingPath;
+    } else {
+      const webmFiles = readdirSync(artifactDir).filter((f) => f.endsWith('.webm'));
+      if (webmFiles.length > 0) {
+        videoPath = join(artifactDir, webmFiles[0]);
+        logger.info('Using first .webm file found', { file: webmFiles[0] });
+      }
+    }
+  }
+
+  if (!videoPath || !existsSync(videoPath)) {
+    throw new Error('No video file found. Use --video to specify one.');
+  }
+
+  logger.info('Publishing via Video to Interactive Demo', { video: videoPath });
+
+  // Load auth
+  const cookiePath = opts.cookieFile.replace(/^~/, process.env.HOME ?? '');
+  const auth = loadAuth(cookiePath);
+
+  // Publish
+  const result = await videoToDemo(auth, videoPath, { cleanupMp4: true });
+
+  process.stdout.write(JSON.stringify({
+    flowId: result.flowId,
+    editUrl: result.editUrl,
+    title: result.title,
+    createdAt: new Date().toISOString(),
+  }, null, 2) + '\n');
 }
 
 async function publishViaExtension(
