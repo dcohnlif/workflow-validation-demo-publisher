@@ -24,7 +24,7 @@ export async function screenshotsToDemo(
   videoPath: string,
   actions: readonly DemoAction[],
   title: string,
-  options: { storageStatePath?: string } = {},
+  options: { storageStatePath?: string; callouts?: readonly string[] } = {},
 ): Promise<ScreenshotsDemoResult> {
   // Step 1: Filter to click actions only (these are the meaningful steps)
   const clickActions = actions.filter((a) => a.type === 'click');
@@ -174,65 +174,61 @@ export async function screenshotsToDemo(
       }
     }
 
-    // Add callouts to each step using the action labels
-    logger.info('Adding callouts to steps...');
-    const { toImperativeLabel } = await import('../transform/labels.js');
+    // Add callouts to each step
+    const calloutTexts = options.callouts;
+    if (calloutTexts && calloutTexts.length > 0) {
+      logger.info('Adding callouts to steps...', { count: calloutTexts.length });
+      const { toImperativeLabel } = await import('../transform/labels.js');
 
-    for (let i = 0; i < Math.min(framePaths.length, clickActions.length); i++) {
-      try {
-        const stepNum = i + 1;
+      for (let i = 0; i < Math.min(framePaths.length, clickActions.length); i++) {
+        try {
+          const stepNum = i + 1;
 
-        // Navigate to the step by clicking its number badge in the thumbnail list
-        // The thumbnails have the step number as text content
-        const allStepBadges = page.locator(`text="${stepNum}"`);
-        const count = await allStepBadges.count();
-
-        // Find the one that's a small badge (in the thumbnail area, not in content)
-        let clicked = false;
-        for (let j = 0; j < count; j++) {
-          const badge = allStepBadges.nth(j);
-          const box = await badge.boundingBox();
-          if (box && box.x < 230 && box.width < 40) {
-            // This is in the sidebar area (left side, small element)
-            await badge.click();
-            clicked = true;
-            break;
+          // Navigate to the step by clicking its number badge
+          const allStepBadges = page.locator(`text="${stepNum}"`);
+          const badgeCount = await allStepBadges.count();
+          let clicked = false;
+          for (let j = 0; j < badgeCount; j++) {
+            const badge = allStepBadges.nth(j);
+            const box = await badge.boundingBox();
+            if (box && box.x < 230 && box.width < 40) {
+              await badge.click();
+              clicked = true;
+              break;
+            }
           }
+
+          if (!clicked) continue;
+          await page.waitForTimeout(1000);
+
+          // Click the "Callout" toolbar button
+          const calloutBtn = page.locator('button[aria-label="Callout"]');
+          if (!(await calloutBtn.isVisible({ timeout: 3000 }))) continue;
+          await calloutBtn.click();
+          await page.waitForTimeout(1000);
+
+          // Type callout text -- use LLM-enhanced text if available, else raw label
+          const labelText = i < calloutTexts.length
+            ? calloutTexts[i]
+            : toImperativeLabel(clickActions[i].rawNarrative);
+
+          // Select all placeholder text and replace
+          await page.keyboard.press('Control+A');
+          await page.keyboard.type(labelText);
+          await page.waitForTimeout(300);
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(300);
+
+          if (stepNum % 5 === 0 || stepNum === 1) {
+            logger.info('Callout added', { step: stepNum, label: labelText.slice(0, 60) });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn('Failed to add callout', { step: i + 1, error: msg });
         }
-
-        if (!clicked) {
-          logger.warn('Could not find step thumbnail', { step: stepNum });
-          continue;
-        }
-        await page.waitForTimeout(1000);
-
-        // Click the "Callout" toolbar button (identified by aria-label)
-        const calloutBtn = page.locator('button[aria-label="Callout"]');
-        if (!(await calloutBtn.isVisible({ timeout: 3000 }))) {
-          logger.warn('Callout button not visible', { step: stepNum });
-          continue;
-        }
-        await calloutBtn.click();
-        await page.waitForTimeout(1000);
-
-        // Type the callout text
-        const labelText = toImperativeLabel(clickActions[i].rawNarrative);
-        await page.keyboard.type(labelText);
-        await page.waitForTimeout(300);
-
-        // Press Escape to deselect the callout
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(300);
-
-        if (stepNum % 5 === 0 || stepNum === 1) {
-          logger.info('Callout added', { step: stepNum, label: labelText.slice(0, 50) });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn('Failed to add callout', { step: i + 1, error: msg });
       }
+      logger.info('Callouts complete');
     }
-    logger.info('Callouts complete');
 
     // Set the title
     logger.info('Setting demo title...');

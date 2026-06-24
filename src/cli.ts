@@ -12,6 +12,7 @@ import { ExtensionClient } from './arcade/extension-client.js';
 import { extensionPublish } from './arcade/extension-publish.js';
 import { videoToDemo } from './arcade/video-to-demo.js';
 import { screenshotsToDemo } from './arcade/screenshots-to-demo.js';
+import { enhanceDemo } from './transform/enhance.js';
 import * as logger from './util/logger.js';
 import type { ArcadeConfig, PublishResult } from './types.js';
 
@@ -268,7 +269,8 @@ export function createCli(): Command {
     .option('--storage-state <path>', 'Playwright storage state file (more reliable than cookie)', '~/.arcade-state.json')
     .option('--video <path>', 'Path to video file (overrides auto-detection)')
     .option('--title <title>', 'Demo title (overrides auto-detection from report.md)')
-    .action(async (artifactDir: string, opts: { cookieFile: string; storageState: string; video?: string; title?: string }) => {
+    .option('--enhance', 'Use LLM to generate better callout text', false)
+    .action(async (artifactDir: string, opts: { cookieFile: string; storageState: string; video?: string; title?: string; enhance: boolean }) => {
       try {
         await publishViaScreenshots(artifactDir, opts);
       } catch (err) {
@@ -283,7 +285,7 @@ export function createCli(): Command {
 
 async function publishViaScreenshots(
   artifactDir: string,
-  opts: { cookieFile: string; storageState: string; video?: string; title?: string },
+  opts: { cookieFile: string; storageState: string; video?: string; title?: string; enhance: boolean },
 ): Promise<void> {
   const actionsPath = join(artifactDir, ACTIONS_FILENAME);
   if (!existsSync(actionsPath)) {
@@ -326,12 +328,22 @@ async function publishViaScreenshots(
     title = metadata.workflowName;
   }
 
+  // Enhance with LLM if requested
+  let callouts: readonly string[] | undefined;
+  if (opts.enhance) {
+    const enhanced = await enhanceDemo(actions, metadata.workflowName);
+    if (!opts.title) title = enhanced.title;
+    callouts = enhanced.callouts;
+    logger.info('LLM enhancement applied', { title, callouts: callouts.length });
+  }
+
   logger.info('Publishing via screenshots', {
     workflow: metadata.workflowName,
     actions: actions.length,
     clicks: actions.filter((a) => a.type === 'click').length,
     video: videoPath,
     title,
+    enhanced: opts.enhance,
   });
 
   // Load auth
@@ -342,7 +354,7 @@ async function publishViaScreenshots(
   const storageStatePath = opts.storageState.replace(/^~/, process.env.HOME ?? '');
 
   // Publish
-  const result = await screenshotsToDemo(auth, videoPath, actions, title, { storageStatePath });
+  const result = await screenshotsToDemo(auth, videoPath, actions, title, { storageStatePath, callouts });
 
   process.stdout.write(JSON.stringify({
     flowId: result.flowId,
