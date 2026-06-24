@@ -1,7 +1,7 @@
 export interface ReportData {
   readonly title: string;
   readonly description: string;
-  readonly chapters: readonly { readonly title: string }[];
+  readonly sections: readonly { readonly title: string }[];
 }
 
 export function parseReportFile(content: string): ReportData {
@@ -29,13 +29,13 @@ export function parseReportFile(content: string): ReportData {
     description = descLines.join('\n').trim();
   }
 
-  // Chapters: all "## " headings, in order
-  const chapters: { readonly title: string }[] = [];
+  // Sections: all "## " headings, in order
+  const sections: { readonly title: string }[] = [];
   for (const line of lines) {
     if (line.startsWith('## ')) {
-      chapters.push({ title: line.slice(3).trim() });
+      sections.push({ title: line.slice(3).trim() });
     }
   }
 
-  return { title, description, chapters };
+  return { title, description, sections };
 }

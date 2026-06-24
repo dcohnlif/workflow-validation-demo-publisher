@@ -26,22 +26,6 @@ export interface DemoAction {
   readonly rawNarrative: string;
 }
 
-/** A chapter boundary from report.md */
-export interface DemoChapter {
-  readonly title: string;
-  readonly timestampStart: number;
-}
-
-/** Full parsed workflow demo data */
-export interface WorkflowDemo {
-  readonly title: string;
-  readonly description: string;
-  readonly videoPath: string;
-  readonly actions: readonly DemoAction[];
-  readonly chapters: readonly DemoChapter[];
-  readonly screenshots: readonly string[];
-}
-
 /** Arcade API event format */
 export interface ArcadeEvent {
   readonly type: 'click' | 'scroll' | 'type';

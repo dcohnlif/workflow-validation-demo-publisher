@@ -16,6 +16,7 @@ function parseTimeToSeconds(timeStr: string): number {
 function mapToolToActionType(tool: string, narrative: string): ActionType {
   switch (tool) {
     case 'browser_click':
+    case 'browser_select_option':
       return 'click';
     case 'browser_type':
     case 'browser_fill_form':

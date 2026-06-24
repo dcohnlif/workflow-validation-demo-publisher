@@ -22,26 +22,26 @@ describe('parseReportFile', () => {
     );
   });
 
-  it('should extract chapters from ## headings', () => {
+  it('should extract sections from ## headings', () => {
     const result = parseReportFile(fixtureContent);
-    assert.equal(result.chapters.length, 3);
-    assert.equal(result.chapters[0].title, 'Task 1: Navigate to Dashboard');
-    assert.equal(result.chapters[1].title, 'Task 2: Create a New Project');
-    assert.equal(result.chapters[2].title, 'Summary');
+    assert.equal(result.sections.length, 3);
+    assert.equal(result.sections[0].title, 'Task 1: Navigate to Dashboard');
+    assert.equal(result.sections[1].title, 'Task 2: Create a New Project');
+    assert.equal(result.sections[2].title, 'Summary');
   });
 
   it('should handle empty description', () => {
-    const content = '# Title\n## Chapter 1\nSome content';
+    const content = '# Title\n## Section 1\nSome content';
     const result = parseReportFile(content);
     assert.equal(result.title, 'Title');
     assert.equal(result.description, '');
   });
 
-  it('should handle report with no chapters', () => {
+  it('should handle report with no sections', () => {
     const content = '# Title\n\nSome description text.';
     const result = parseReportFile(content);
     assert.equal(result.title, 'Title');
     assert.equal(result.description, 'Some description text.');
-    assert.equal(result.chapters.length, 0);
+    assert.equal(result.sections.length, 0);
   });
 });

@@ -7,6 +7,9 @@ import { transformToArcadeEvents } from './transform/events.js';
 import { toImperativeLabel } from './transform/labels.js';
 import { ArcadeClient } from './arcade/client.js';
 import { uploadWorkflowVideo } from './arcade/upload.js';
+import { loadAuth } from './arcade/auth.js';
+import { ExtensionClient } from './arcade/extension-client.js';
+import { extensionPublish } from './arcade/extension-publish.js';
 import * as logger from './util/logger.js';
 import type { ArcadeConfig, PublishResult } from './types.js';
 
@@ -21,14 +24,19 @@ interface PublishOptions {
   readonly arcadeId?: string;
 }
 
+const DEFAULT_BASE_URL = 'https://api.arcade.software';
+
 function resolveConfig(options: PublishOptions): ArcadeConfig {
   const apiKey = options.apiKey ?? process.env.ARCADE_API_KEY ?? '';
   if (!apiKey && !options.dryRun) {
     throw new Error('API key required. Use --api-key or set ARCADE_API_KEY environment variable.');
   }
+  const baseUrl = options.baseUrl !== DEFAULT_BASE_URL
+    ? options.baseUrl
+    : process.env.ARCADE_BASE_URL ?? options.baseUrl;
   return {
     apiKey,
-    baseUrl: options.baseUrl,
+    baseUrl,
     dryRun: options.dryRun,
   };
 }
@@ -41,20 +49,27 @@ async function publish(artifactDir: string, options: PublishOptions): Promise<vo
   if (!existsSync(actionsPath)) {
     throw new Error(`${ACTIONS_FILENAME} not found in ${artifactDir}`);
   }
-  if (!existsSync(reportPath)) {
-    throw new Error(`report.md not found in ${artifactDir}`);
+
+  // Validate API key early — fail fast before parsing if we'll need it
+  if (!options.dryRun) {
+    resolveConfig(options);
   }
 
   const actionsContent = readFileSync(actionsPath, 'utf-8');
-  const reportContent = readFileSync(reportPath, 'utf-8');
-
   const { metadata, actions } = parseActionsFile(actionsContent);
-  const report = parseReportFile(reportContent);
+
+  const report = existsSync(reportPath)
+    ? parseReportFile(readFileSync(reportPath, 'utf-8'))
+    : { title: '', description: '', sections: [] };
+
+  if (!existsSync(reportPath)) {
+    logger.warn('No report.md found, using metadata for title', { artifactDir });
+  }
 
   logger.info('Parsed artifacts', {
     workflow: metadata.workflowName,
     actions: actions.length,
-    chapters: report.chapters.length,
+    sections: report.sections.length,
   });
 
   const arcadeEvents = transformToArcadeEvents(actions);
@@ -68,7 +83,7 @@ async function publish(artifactDir: string, options: PublishOptions): Promise<vo
     description: report.description,
     duration: metadata.duration,
     events: labeledEvents,
-    chapters: report.chapters,
+    sections: report.sections,
   };
 
   if (options.dryRun) {
@@ -98,30 +113,20 @@ async function publish(artifactDir: string, options: PublishOptions): Promise<vo
     events: labeledEvents,
   };
 
-  let result: PublishResult;
-  if (options.arcadeId) {
-    const response = await client.updateArcade(options.arcadeId, request);
-    result = {
-      arcadeId: response.arcadeId,
-      shareUrl: `${ARCADE_APP_URL}/share/${response.arcadeId}`,
-      title: manifest.title,
-      steps: labeledEvents.length,
-      duration: metadata.duration,
-      createdAt: new Date().toISOString(),
-    };
-    logger.info('Arcade updated', { arcadeId: response.arcadeId });
-  } else {
-    const response = await client.createArcade(request);
-    result = {
-      arcadeId: response.arcadeId,
-      shareUrl: `${ARCADE_APP_URL}/share/${response.arcadeId}`,
-      title: manifest.title,
-      steps: labeledEvents.length,
-      duration: metadata.duration,
-      createdAt: new Date().toISOString(),
-    };
-    logger.info('Arcade created', { arcadeId: response.arcadeId });
-  }
+  const isUpdate = Boolean(options.arcadeId);
+  const response = isUpdate
+    ? await client.updateArcade(options.arcadeId!, request)
+    : await client.createArcade(request);
+
+  const result: PublishResult = {
+    arcadeId: response.arcadeId,
+    shareUrl: `${ARCADE_APP_URL}/share/${response.arcadeId}`,
+    title: manifest.title,
+    steps: labeledEvents.length,
+    duration: metadata.duration,
+    createdAt: new Date().toISOString(),
+  };
+  logger.info(isUpdate ? 'Arcade updated' : 'Arcade created', { arcadeId: response.arcadeId });
 
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
@@ -129,6 +134,11 @@ async function publish(artifactDir: string, options: PublishOptions): Promise<vo
 async function publishAll(runDir: string, options: PublishOptions): Promise<void> {
   if (!existsSync(runDir) || !statSync(runDir).isDirectory()) {
     throw new Error(`Run directory not found: ${runDir}`);
+  }
+
+  // Validate API key once upfront — fail fast before scanning workflows
+  if (!options.dryRun) {
+    resolveConfig(options);
   }
 
   const entries = readdirSync(runDir).filter((entry) => {
@@ -184,7 +194,7 @@ export function createCli(): Command {
     .description('Publish a single workflow artifact directory to Arcade')
     .argument('<artifact-dir>', 'Path to the artifact directory')
     .option('--api-key <key>', 'Arcade API key (or set ARCADE_API_KEY)')
-    .option('--base-url <url>', 'Arcade API base URL', 'https://api.arcade.software/v1')
+    .option('--base-url <url>', 'Arcade API base URL', DEFAULT_BASE_URL)
     .option('--dry-run', 'Output manifest without uploading', false)
     .option('--output <path>', 'Write manifest to file instead of stdout')
     .option('--arcade-id <id>', 'Existing Arcade ID to update')
@@ -203,7 +213,7 @@ export function createCli(): Command {
     .description('Publish all workflow artifacts in a run directory')
     .argument('<run-dir>', 'Path to the run directory')
     .option('--api-key <key>', 'Arcade API key (or set ARCADE_API_KEY)')
-    .option('--base-url <url>', 'Arcade API base URL', 'https://api.arcade.software/v1')
+    .option('--base-url <url>', 'Arcade API base URL', DEFAULT_BASE_URL)
     .option('--dry-run', 'Output manifests without uploading', false)
     .action(async (runDir: string, opts: PublishOptions) => {
       try {
@@ -215,5 +225,99 @@ export function createCli(): Command {
       }
     });
 
+  program
+    .command('publish-ext')
+    .description('Publish using Arcade internal extension API (cookie auth)')
+    .argument('<artifact-dir>', 'Path to the artifact directory')
+    .option('--cookie-file <path>', 'Path to file containing Arcade session cookie', '~/.arcade-cookie')
+    .option('--video <path>', 'Path to video file (overrides auto-detection)')
+    .action(async (artifactDir: string, opts: { cookieFile: string; video?: string }) => {
+      try {
+        await publishViaExtension(artifactDir, opts);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Publish-ext failed', { error: message });
+        process.exitCode = 1;
+      }
+    });
+
   return program;
+}
+
+async function publishViaExtension(
+  artifactDir: string,
+  opts: { cookieFile: string; video?: string },
+): Promise<void> {
+  const actionsPath = join(artifactDir, ACTIONS_FILENAME);
+
+  if (!existsSync(actionsPath)) {
+    throw new Error(`${ACTIONS_FILENAME} not found in ${artifactDir}`);
+  }
+
+  // Find video: explicit flag > recording.webm > any .webm in the directory
+  let videoPath = opts.video;
+  if (!videoPath) {
+    const recordingPath = join(artifactDir, 'recording.webm');
+    if (existsSync(recordingPath)) {
+      videoPath = recordingPath;
+    } else {
+      const webmFiles = readdirSync(artifactDir).filter((f) => f.endsWith('.webm'));
+      if (webmFiles.length > 0) {
+        videoPath = join(artifactDir, webmFiles[0]);
+        logger.info('Using first .webm file found', { file: webmFiles[0] });
+      }
+    }
+  }
+
+  if (!videoPath || !existsSync(videoPath)) {
+    throw new Error('No video file found. Use --video to specify one.');
+  }
+
+  // Parse artifacts
+  const actionsContent = readFileSync(actionsPath, 'utf-8');
+  const { metadata, actions } = parseActionsFile(actionsContent);
+
+  const reportPath = join(artifactDir, 'report.md');
+  const report = existsSync(reportPath)
+    ? parseReportFile(readFileSync(reportPath, 'utf-8'))
+    : { title: '', description: '', sections: [] };
+
+  const arcadeEvents = transformToArcadeEvents(actions);
+  const labeledEvents = arcadeEvents.map((event) => ({
+    ...event,
+    label: event.label ? toImperativeLabel(event.label) : event.label,
+  }));
+
+  const title = report.title || metadata.workflowName;
+  const description = report.description || `Workflow: ${metadata.workflowName}`;
+
+  logger.info('Parsed artifacts', {
+    workflow: metadata.workflowName,
+    actions: actions.length,
+    events: labeledEvents.length,
+    video: videoPath,
+  });
+
+  // Resolve cookie file path
+  const cookiePath = opts.cookieFile.replace(/^~/, process.env.HOME ?? '');
+  const auth = loadAuth(cookiePath);
+  const client = new ExtensionClient(auth);
+
+  // Publish
+  const result = await extensionPublish(client, {
+    title,
+    description,
+    videoPath,
+    actions,
+    events: labeledEvents,
+  });
+
+  process.stdout.write(JSON.stringify({
+    flowId: result.flowId,
+    editUrl: result.editUrl,
+    title,
+    steps: result.steps,
+    duration: metadata.duration,
+    createdAt: new Date().toISOString(),
+  }, null, 2) + '\n');
 }
