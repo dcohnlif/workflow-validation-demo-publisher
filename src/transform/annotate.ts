@@ -219,12 +219,18 @@ img.save("${outputPath}")
  * Annotate all screenshots with callouts.
  * For each frame: use Claude vision to find the click target, then draw a callout.
  */
+export interface AnnotationResult {
+  readonly paths: string[];
+  readonly coords: (ClickTarget | null)[];
+}
+
 export async function annotateScreenshots(
   framePaths: readonly string[],
   callouts: readonly string[],
   actionDescriptions: readonly string[],
-): Promise<string[]> {
+): Promise<AnnotationResult> {
   const annotatedPaths: string[] = [];
+  const coords: (ClickTarget | null)[] = [];
 
   logger.info('Annotating screenshots with callouts...', { count: framePaths.length });
 
@@ -237,6 +243,7 @@ export async function annotateScreenshots(
     try {
       // Find click target using Claude vision
       const target = await findClickTarget(framePath, action);
+      coords.push(target);
       if (target) {
         logger.info('Click target found', { step: i + 1, x: target.x, y: target.y });
       }
@@ -251,10 +258,11 @@ export async function annotateScreenshots(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('Failed to annotate screenshot, using original', { step: i + 1, error: msg });
-      annotatedPaths.push(framePath); // fallback to unannotated
+      annotatedPaths.push(framePath);
+      coords.push(null);
     }
   }
 
   logger.info('Annotation complete', { annotated: annotatedPaths.length });
-  return annotatedPaths;
+  return { paths: annotatedPaths, coords };
 }

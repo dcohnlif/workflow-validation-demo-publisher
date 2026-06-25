@@ -12,6 +12,8 @@ import { ExtensionClient } from './arcade/extension-client.js';
 import { extensionPublish } from './arcade/extension-publish.js';
 import { videoToDemo } from './arcade/video-to-demo.js';
 import { screenshotsToDemo } from './arcade/screenshots-to-demo.js';
+import { replayToDemo } from './arcade/replay-to-demo.js';
+import { recordDemo } from './arcade/record-demo.js';
 import { enhanceDemo } from './transform/enhance.js';
 import * as logger from './util/logger.js';
 import type { ArcadeConfig, PublishResult } from './types.js';
@@ -354,8 +356,8 @@ async function publishViaScreenshots(
   // Resolve storage state path
   const storageStatePath = opts.storageState.replace(/^~/, process.env.HOME ?? '');
 
-  // Publish
-  const result = await screenshotsToDemo(auth, videoPath, actions, title, { storageStatePath, callouts });
+  // Publish using record approach: replay clicks on screenshots as a real recording
+  const result = await recordDemo(auth, videoPath, actions, title, [], { storageStatePath, callouts });
 
   process.stdout.write(JSON.stringify({
     flowId: result.flowId,

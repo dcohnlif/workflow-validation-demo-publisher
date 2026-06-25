@@ -21,7 +21,7 @@ const execFileAsync = promisify(execFile);
 export async function createSlideshow(
   framePaths: readonly string[],
   outputPath: string,
-  secondsPerFrame = 3,
+  secondsPerFrame = 5,
 ): Promise<string> {
   if (framePaths.length === 0) {
     throw new Error('No frames provided for slideshow');

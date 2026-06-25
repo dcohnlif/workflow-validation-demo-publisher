@@ -59,7 +59,7 @@ export async function screenshotsToDemo(
   let uploadPaths = framePaths;
   if (options.callouts && options.callouts.length > 0) {
     const actionDescriptions = clickActions.map((a) => a.rawNarrative);
-    const annotated = await annotateScreenshots(framePaths, options.callouts, actionDescriptions);
+    const { paths: annotated } = await annotateScreenshots(framePaths, options.callouts, actionDescriptions);
     uploadPaths = annotated;
 
     // Step 2c: Create a slideshow video from annotated screenshots and upload
@@ -68,7 +68,7 @@ export async function screenshotsToDemo(
     const { videoToDemo } = await import('./video-to-demo.js');
 
     const slideshowPath = join(dirname(videoPath), '.arcade-slideshow.mp4');
-    await createSlideshow(annotated, slideshowPath, 3);
+    await createSlideshow(annotated, slideshowPath, 5);
 
     try {
       const result = await videoToDemo(auth, slideshowPath, {
