@@ -61,8 +61,34 @@ export async function screenshotsToDemo(
     const actionDescriptions = clickActions.map((a) => a.rawNarrative);
     const annotated = await annotateScreenshots(framePaths, options.callouts, actionDescriptions);
     uploadPaths = annotated;
+
+    // Step 2c: Create a slideshow video from annotated screenshots and upload
+    // via "Video to Interactive Demo" -- Avery adds interactive hotspots automatically
+    const { createSlideshow } = await import('../util/slideshow.js');
+    const { videoToDemo } = await import('./video-to-demo.js');
+
+    const slideshowPath = join(dirname(videoPath), '.arcade-slideshow.mp4');
+    await createSlideshow(annotated, slideshowPath, 3);
+
+    try {
+      const result = await videoToDemo(auth, slideshowPath, {
+        cleanupMp4: false,
+        storageStatePath: options.storageStatePath,
+      });
+
+      return {
+        flowId: result.flowId,
+        editUrl: result.editUrl,
+        title: result.title || title,
+        steps: annotated.length,
+      };
+    } finally {
+      // Clean up slideshow
+      try { if (existsSync(slideshowPath)) { const fs = await import('node:fs'); fs.unlinkSync(slideshowPath); } } catch { /* ignore */ }
+    }
   }
 
+  // Fallback: upload screenshots directly (no callouts, no interactivity)
   // Step 3: Launch Playwright and upload screenshots
   const pw = await import('playwright');
   const browser = await pw.chromium.launch({ headless: true, channel: 'chrome' });

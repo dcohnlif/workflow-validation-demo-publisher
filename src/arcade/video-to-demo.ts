@@ -56,7 +56,7 @@ function buildCookieList(cookieStr: string): Array<{
 export async function videoToDemo(
   auth: ArcadeAuth,
   videoPath: string,
-  options: { cleanupMp4?: boolean; trim?: boolean; actions?: readonly DemoAction[] } = {},
+  options: { cleanupMp4?: boolean; trim?: boolean; actions?: readonly DemoAction[]; storageStatePath?: string } = {},
 ): Promise<VideoToDemoResult> {
   let inputPath = videoPath;
   const filesToCleanup: string[] = [];
@@ -92,11 +92,16 @@ export async function videoToDemo(
   const browser = await pw.chromium.launch({ headless: true, channel: 'chrome' });
 
   try {
-    const context = await browser.newContext();
+    // Use storageState if available (more reliable than cookies alone)
+    const contextOptions = options.storageStatePath && existsSync(options.storageStatePath)
+      ? { storageState: options.storageStatePath }
+      : {};
+    const context = await browser.newContext(contextOptions);
 
-    // Set cookies
-    const cookies = buildCookieList(auth.cookie);
-    await context.addCookies(cookies);
+    if (!options.storageStatePath || !existsSync(options.storageStatePath)) {
+      const cookies = buildCookieList(auth.cookie);
+      await context.addCookies(cookies);
+    }
 
     const page = await context.newPage();
 

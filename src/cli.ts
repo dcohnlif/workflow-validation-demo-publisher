@@ -249,9 +249,10 @@ export function createCli(): Command {
     .description('Publish using Arcade "Video to Interactive Demo" via Playwright')
     .argument('<artifact-dir>', 'Path to the artifact directory')
     .option('--cookie-file <path>', 'Path to file containing Arcade session cookie', '~/.arcade-cookie')
+    .option('--storage-state <path>', 'Playwright storage state file', '~/.arcade-state.json')
     .option('--video <path>', 'Path to video file (overrides auto-detection)')
     .option('--trim', 'Trim idle time from video before uploading', false)
-    .action(async (artifactDir: string, opts: { cookieFile: string; video?: string; trim: boolean }) => {
+    .action(async (artifactDir: string, opts: { cookieFile: string; storageState: string; video?: string; trim: boolean }) => {
       try {
         await publishViaVideo(artifactDir, opts);
       } catch (err) {
@@ -368,7 +369,7 @@ async function publishViaScreenshots(
 
 async function publishViaVideo(
   artifactDir: string,
-  opts: { cookieFile: string; video?: string; trim: boolean },
+  opts: { cookieFile: string; storageState: string; video?: string; trim: boolean },
 ): Promise<void> {
   // Find video: explicit flag > recording.webm > any .webm in the directory
   let videoPath = opts.video;
@@ -405,11 +406,15 @@ async function publishViaVideo(
   const cookiePath = opts.cookieFile.replace(/^~/, process.env.HOME ?? '');
   const auth = loadAuth(cookiePath);
 
+  // Resolve storage state path
+  const storageStatePath = opts.storageState.replace(/^~/, process.env.HOME ?? '');
+
   // Publish
   const result = await videoToDemo(auth, videoPath, {
     cleanupMp4: true,
     trim: opts.trim,
     actions,
+    storageStatePath,
   });
 
   process.stdout.write(JSON.stringify({
