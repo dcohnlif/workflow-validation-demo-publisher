@@ -3,10 +3,11 @@
  * Each screenshot (extracted from video at action timestamps) becomes a step.
  * This uses Playwright to automate the "Start from scratch" -> "My computer" flow.
  */
-import { existsSync, readdirSync, unlinkSync, rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import * as logger from '../util/logger.js';
 import { extractClickFrames } from '../util/frames.js';
+import { annotateScreenshots } from '../transform/annotate.js';
 import type { DemoAction } from '../types.js';
 import type { ArcadeAuth } from './auth.js';
 
@@ -53,6 +54,14 @@ export async function screenshotsToDemo(
   }
 
   logger.info('Frames ready for upload', { count: framePaths.length });
+
+  // Step 2b: Annotate screenshots with callouts if provided
+  let uploadPaths = framePaths;
+  if (options.callouts && options.callouts.length > 0) {
+    const actionDescriptions = clickActions.map((a) => a.rawNarrative);
+    const annotated = await annotateScreenshots(framePaths, options.callouts, actionDescriptions);
+    uploadPaths = annotated;
+  }
 
   // Step 3: Launch Playwright and upload screenshots
   const pw = await import('playwright');
@@ -136,13 +145,13 @@ export async function screenshotsToDemo(
     const firstChooserPromise = page.waitForEvent('filechooser', { timeout: 10_000 });
     await myComputerButton.click();
     const firstChooser = await firstChooserPromise;
-    await firstChooser.setFiles(framePaths[0]);
+    await firstChooser.setFiles(uploadPaths[0]);
     await page.waitForTimeout(3000);
     logger.info('First screenshot uploaded', { step: 1 });
 
     // Upload remaining screenshots via "Add step" -> "My computer"
-    if (framePaths.length > 1) {
-      const remainingPaths = framePaths.slice(1);
+    if (uploadPaths.length > 1) {
+      const remainingPaths = uploadPaths.slice(1);
       logger.info('Uploading remaining screenshots...', { count: remainingPaths.length });
 
       // Upload in batches to avoid overwhelming the UI
@@ -169,66 +178,13 @@ export async function screenshotsToDemo(
         logger.info('Batch uploaded', {
           batch: Math.floor(i / batchSize) + 1,
           steps: `${i + 2}-${i + 1 + batch.length}`,
-          total: framePaths.length,
+          total: uploadPaths.length,
         });
       }
     }
 
-    // Add callouts to each step
-    const calloutTexts = options.callouts;
-    if (calloutTexts && calloutTexts.length > 0) {
-      logger.info('Adding callouts to steps...', { count: calloutTexts.length });
-      const { toImperativeLabel } = await import('../transform/labels.js');
-
-      for (let i = 0; i < Math.min(framePaths.length, clickActions.length); i++) {
-        try {
-          const stepNum = i + 1;
-
-          // Navigate to the step by clicking its number badge
-          const allStepBadges = page.locator(`text="${stepNum}"`);
-          const badgeCount = await allStepBadges.count();
-          let clicked = false;
-          for (let j = 0; j < badgeCount; j++) {
-            const badge = allStepBadges.nth(j);
-            const box = await badge.boundingBox();
-            if (box && box.x < 230 && box.width < 40) {
-              await badge.click();
-              clicked = true;
-              break;
-            }
-          }
-
-          if (!clicked) continue;
-          await page.waitForTimeout(1000);
-
-          // Click the "Callout" toolbar button
-          const calloutBtn = page.locator('button[aria-label="Callout"]');
-          if (!(await calloutBtn.isVisible({ timeout: 3000 }))) continue;
-          await calloutBtn.click();
-          await page.waitForTimeout(1000);
-
-          // Type callout text -- use LLM-enhanced text if available, else raw label
-          const labelText = i < calloutTexts.length
-            ? calloutTexts[i]
-            : toImperativeLabel(clickActions[i].rawNarrative);
-
-          // Select all placeholder text and replace
-          await page.keyboard.press('Control+A');
-          await page.keyboard.type(labelText);
-          await page.waitForTimeout(300);
-          await page.keyboard.press('Escape');
-          await page.waitForTimeout(300);
-
-          if (stepNum % 5 === 0 || stepNum === 1) {
-            logger.info('Callout added', { step: stepNum, label: labelText.slice(0, 60) });
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.warn('Failed to add callout', { step: i + 1, error: msg });
-        }
-      }
-      logger.info('Callouts complete');
-    }
+    // Callouts are now baked into the screenshots (via annotateScreenshots)
+    // No need to add them via the Arcade editor UI
 
     // Set the title
     logger.info('Setting demo title...');
@@ -252,14 +208,14 @@ export async function screenshotsToDemo(
     logger.info('Demo published', {
       flowId,
       editUrl: finalEditUrl,
-      steps: framePaths.length,
+      steps: uploadPaths.length,
     });
 
     return {
       flowId,
       editUrl: finalEditUrl,
       title,
-      steps: framePaths.length,
+      steps: uploadPaths.length,
     };
   } finally {
     await browser.close();

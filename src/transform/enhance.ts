@@ -56,7 +56,7 @@ Return ONLY the JSON, no other text.`;
     const response = await generate(prompt, 4096);
 
     // Parse the JSON response
-    const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+    const jsonMatch = response.text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
     if (!jsonMatch) {
       logger.warn('Claude response was not valid JSON, using defaults');
       return { title: workflowName, description: '', callouts: clickActions.map((a) => a.rawNarrative) };
