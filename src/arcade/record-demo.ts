@@ -122,9 +122,25 @@ export async function recordDemo(
     }
   }
 
-  // Step 2: Start local image server
+  // Step 2b: Zoom-crop screenshots to focus on action areas
+  const { zoomCropScreenshots } = await import('../util/zoom-crop.js');
+  const zoomedPaths = await zoomCropScreenshots(displayPaths, resolvedCoords, 960, 700);
+
+  // Recalculate click coordinates relative to the zoomed/cropped images
+  const zoomedCoords: (ClickCoord | null)[] = resolvedCoords.map((coord, i) => {
+    if (!coord) return null;
+    // Get original image dimensions to compute crop offset
+    const origPath = displayPaths[i];
+    const zoomedPath = zoomedPaths[i];
+    if (origPath === zoomedPath) return coord; // wasn't zoomed
+    // The crop region was centered on the click target, so the click
+    // should now be near the center of the zoomed image
+    return { x: 480, y: 350 }; // center of 960x700
+  });
+
+  // Step 2c: Start local image server
   const port = 18932;
-  const server = startImageServer(displayPaths, port);
+  const server = startImageServer(zoomedPaths, port);
   const framesDir = join(dirname(videoPath), '.arcade-frames');
   const recordingDir = join(dirname(videoPath), '.arcade-recording');
 
@@ -132,20 +148,22 @@ export async function recordDemo(
     // Step 3: Launch Playwright with video recording
     const pw = await import('playwright');
     const browser = await pw.chromium.launch({ headless: true, channel: 'chrome' });
+    const viewportW = 960;
+    const viewportH = 700;
     const context = await browser.newContext({
-      viewport: { width: 1388, height: 1080 },
+      viewport: { width: viewportW, height: viewportH },
       recordVideo: {
         dir: recordingDir,
-        size: { width: 1388, height: 1080 },
+        size: { width: viewportW, height: viewportH },
       },
     });
 
     const page = await context.newPage();
 
     // Step 4: Navigate between screenshots and click at identified coordinates
-    logger.info('Recording demo...', { steps: displayPaths.length });
+    logger.info('Recording demo...', { steps: zoomedPaths.length });
 
-    for (let i = 0; i < displayPaths.length; i++) {
+    for (let i = 0; i < zoomedPaths.length; i++) {
       await page.goto(`http://localhost:${port}/step/${i}`, {
         waitUntil: 'load',
         timeout: 10_000,
@@ -154,10 +172,10 @@ export async function recordDemo(
       // Wait for the image to render and give Avery time to see this as a distinct frame
       await page.waitForTimeout(2500);
 
-      // Click at the identified coordinate (or center if unknown)
-      const coord = i < resolvedCoords.length ? resolvedCoords[i] : null;
-      const clickX = coord?.x ?? 694;
-      const clickY = coord?.y ?? 540;
+      // Click at the identified coordinate (centered in zoomed view)
+      const coord = i < zoomedCoords.length ? zoomedCoords[i] : null;
+      const clickX = coord?.x ?? Math.round(viewportW / 2);
+      const clickY = coord?.y ?? Math.round(viewportH / 2);
 
       // Smooth mouse movement to the click target (makes click detection easier for Avery)
       await page.mouse.move(clickX, clickY, { steps: 15 });
